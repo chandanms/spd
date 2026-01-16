@@ -29,7 +29,7 @@ def _stochastic_recon_layerwise_loss_update(
     sum_loss = torch.tensor(0.0, device=device)
     n_examples = 0
 
-    print("[LayerWise Loss: Calling the component masking function]")
+    print("[LayerWise Recon Loss]: Calling the component masking function")
     stochastic_mask_infos_list = [
         calc_stochastic_component_mask_info(
             causal_importances=ci,
