@@ -29,12 +29,15 @@ def _stochastic_recon_layerwise_loss_update(
     sum_loss = torch.tensor(0.0, device=device)
     n_examples = 0
 
+    print("[LayerWise Loss: Calling the component masking function]")
     stochastic_mask_infos_list = [
         calc_stochastic_component_mask_info(
             causal_importances=ci,
             component_mask_sampling=sampling,
             weight_deltas=weight_deltas,
             router=AllLayersRouter(),
+            component_model=model,
+            use_gradient_informed=True,  # Use gradients in layerwise loss
         )
         for _ in range(n_mask_samples)
     ]

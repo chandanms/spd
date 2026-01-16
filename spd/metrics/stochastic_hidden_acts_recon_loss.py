@@ -35,6 +35,8 @@ def _stochastic_hidden_acts_recon_loss_update(
             component_mask_sampling=sampling,
             weight_deltas=weight_deltas,
             router=AllLayersRouter(),
+            component_model=model,
+            use_gradient_informed=True,  # Use gradients for hidden acts loss
         )
         for _ in range(n_mask_samples)
     ]

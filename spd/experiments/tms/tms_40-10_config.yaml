@@ -10,6 +10,7 @@ n_mask_samples: 1
 ci_fn_type: "mlp"
 ci_fn_hidden_dims: [16]
 sigmoid_type: "leaky_hard"
+sampling: "gradient_informed"
 module_info:
   - module_pattern: "linear1"
     C: 200
