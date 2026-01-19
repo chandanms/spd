@@ -35,12 +35,6 @@ def calc_stochastic_component_mask_info(
             case "continuous":
                 stochastic_source = torch.rand_like(ci)
             case "gradient_informed":
-                grad_ci_dict = (
-                    getattr(component_model, "_importance_sampling_gradients", None)
-                    if component_model is not None
-                    else None
-                )
-
                 if use_gradient_informed:
                     grad_ci_dict = (
                         getattr(component_model, "_importance_sampling_gradients", None)

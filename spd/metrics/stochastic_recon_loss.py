@@ -35,7 +35,7 @@ def _stochastic_recon_loss_update(
             weight_deltas=weight_deltas,
             router=AllLayersRouter(),
             component_model=model,
-            use_gradient_informed=False,  # Don't use gradients in full loss
+            use_gradient_informed=False,
         )
         for _ in range(n_mask_samples)
     ]
