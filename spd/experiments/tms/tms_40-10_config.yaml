@@ -23,10 +23,11 @@ loss_metric_configs:
   - classname: "ImportanceMinimalityLoss"
     coeff: 1e-4
     pnorm: 2.0
-  - classname: "StochasticReconLayerwiseLoss"
-    coeff: 1.0
   - classname: "StochasticReconLoss"
     coeff: 1.0
+  - classname: "StochasticReconLayerwiseLoss"
+    coeff: 1.0
+
 output_loss_type: "mse"
 
 # --- Training ---

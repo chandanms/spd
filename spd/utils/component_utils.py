@@ -49,25 +49,15 @@ def calc_stochastic_component_mask_info(
                     )
                     if grad_ci_dict is not None:
                         grad = grad_ci_dict[layer]
-                        print(
-                            f"[Sampling] Layer {layer}: Using gradient-informed sampling! "
-                            f"grad shape={grad.shape}, min={grad.min():.6f}, max={grad.max():.6f}"
-                        )
 
                         importance = torch.abs(grad)
                         importance_normalized = importance / (
                             importance.sum(dim=-1, keepdim=True) + 1e-10
                         )
                         stochastic_source = 1.0 - importance_normalized
-
-                        print(
-                            f"[Sampling] Layer {layer}: stochastic_source min={stochastic_source.min():.6f}, "
-                            f"max={stochastic_source.max():.6f}, mean={stochastic_source.mean():.6f}"
-                        )
                     else:
                         raise ValueError("grad_ci_dict is None")
                 else:
-                    print(f"[Sampling] Layer {layer}: Using Uniform sampling! ")
                     stochastic_source = torch.rand_like(ci)
 
         component_masks[layer] = ci + (1 - ci) * stochastic_source

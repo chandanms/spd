@@ -28,7 +28,6 @@ def _stochastic_recon_loss_update(
     device = get_obj_device(ci)
     sum_loss = torch.tensor(0.0, device=device)
     n_examples = 0
-    print("[Full Recon Loss]: Calling the component masking function")
     stoch_mask_infos_list = [
         calc_stochastic_component_mask_info(
             causal_importances=ci,
