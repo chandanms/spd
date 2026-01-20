@@ -292,6 +292,10 @@ def init_wandb(
     """
     load_dotenv(override=True)
 
+    print(f"DEBUG: entity being used: ", os.getenv("WANDB_ENTITY"))  # or whatever variable holds it
+    print(f"DEBUG: project: {project}")
+    print(f"DEBUG: run_id: {run_id}")
+
     wandb.init(
         id=run_id,
         project=project,
