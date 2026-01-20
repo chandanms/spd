@@ -1,6 +1,6 @@
 # TMS 40-10 w/ fixed identity
 # --- WandB ---
-wandb_project: spd
+wandb_project: spd-gradient-informed-sampling
 wandb_run_name: null
 wandb_run_name_prefix: ""
 
@@ -10,7 +10,7 @@ n_mask_samples: 1
 ci_fn_type: "mlp"
 ci_fn_hidden_dims: [16]
 sigmoid_type: "leaky_hard"
-sampling: "gradient_informed"
+sampling: "continuous"
 module_info:
   - module_pattern: "linear1"
     C: 200
