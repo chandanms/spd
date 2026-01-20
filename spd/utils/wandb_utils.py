@@ -292,6 +292,10 @@ def init_wandb(
     """
     load_dotenv(override=True)
 
+    print(f"DEBUG: entity being used: ", os.getenv("WANDB_ENTITY"))  # or whatever variable holds it
+    print(f"DEBUG: project: {project}")
+    print(f"DEBUG: run_id: {run_id}")
+
     wandb.init(
         id=run_id,
         project=project,
@@ -564,21 +568,29 @@ def create_view_and_report(
     logger.section("Creating workspace views...")
     workspace_urls: dict[str, str] = {}
     for experiment in experiments:
-        workspace_url = create_workspace_view(run_id, experiment, project)
-        workspace_urls[experiment] = workspace_url
+        try:
+            workspace_url = create_workspace_view(run_id, experiment, project)
+            workspace_urls[experiment] = workspace_url
+        except Exception as e:
+            logger.warning(f"Could not create workspace view for {experiment}: {e}")
+            # Fallback to direct W&B URL
+            workspace_urls[experiment] = f"https://wandb.ai/chandan-sreedhara/{project}"
 
     # Create report if requested
     report_url: str | None = None
     if report_cfg is not None and len(experiments) > 1:
-        report_url = create_wandb_report(
-            report_title=report_cfg.report_title or f"SPD Run Report - {run_id}",
-            run_id=run_id,
-            branch_name=report_cfg.branch,
-            commit_hash=report_cfg.commit_hash,
-            experiments=experiments,
-            include_run_comparer=True,
-            project=project,
-        )
+        try:
+            report_url = create_wandb_report(
+                report_title=report_cfg.report_title or f"SPD Run Report - {run_id}",
+                run_id=run_id,
+                branch_name=report_cfg.branch,
+                commit_hash=report_cfg.commit_hash,
+                experiments=experiments,
+                include_run_comparer=True,
+                project=project,
+            )
+        except Exception as e:
+            logger.warning(f"Could not create W&B report: {e}")
 
     # Print clean summary after wandb messages
     logger.values(
