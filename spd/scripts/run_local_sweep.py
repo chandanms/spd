@@ -6,14 +6,14 @@ import json
 from spd.configs import Config
 from spd.experiments.tms.tms_decomposition import main
 
-experiments = ["tms_5-2", "tms_40-10", "tms_5-2-id", "tms_40-10-id"]
+experiments = ["tms_5-2-id", "tms_40-10-id"]
 seeds = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
 
 for exp in experiments:
     config_path = f"/home/chandan/spd/spd/experiments/tms/{exp}_config.yaml"
 
     for seed in seeds:
-        run_name = f"{exp}_continuous_sampling_seed-{seed}"
+        run_name = f"{exp}_gradient_informed_sampling_seed-{seed}"
         print(f"========================================")
         print(f"Running: {run_name}")
         print(f"========================================")
