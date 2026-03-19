@@ -10,7 +10,7 @@ experiments = ["tms_5-2", "tms_5-2-id", "tms_40-10", "tms_40-10-id"]
 seeds = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
 
 for exp in experiments:
-    config_path = f"/home/chandan/research/spd/spd/experiments/tms/{exp}_pgd_config.yaml"
+    config_path = f"/home/chandan/spd/spd/experiments/tms/{exp}_pgd_config.yaml"
 
     for seed in seeds:
         run_name = f"{exp}_pgd_seed-{seed}"

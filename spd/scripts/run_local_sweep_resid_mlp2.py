@@ -1,19 +1,22 @@
 #!/usr/bin/env python
-"""Local sweep script for TMS experiments."""
+"""Local sweep comparing PGD vs gradient_informed vs stochastic_only on resid_mlp2."""
 
 import json
+from pathlib import Path
 
 from spd.configs import Config
-from spd.experiments.tms.tms_decomposition import main
+from spd.experiments.resid_mlp.resid_mlp_decomposition import main
 
-experiments = ["tms_5-2", "tms_40-10", "tms_5-2-id", "tms_40-10-id"]
-seeds = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+CONFIG_DIR = Path(__file__).parent.parent / "experiments" / "resid_mlp"
 
-for exp in experiments:
-    config_path = f"/home/chandan/spd/spd/experiments/tms/{exp}_config.yaml"
+conditions = [
+    ("subset_gradient_informed_2.0", CONFIG_DIR / "resid_mlp2_gradient_informed_config.yaml"),
+]
+seeds = [1, 2, 3, 4, 5, 6, 7, 8]
 
+for condition_name, config_path in conditions:
     for seed in seeds:
-        run_name = f"{exp}_gradient_informed_sampling_seed-{seed}"
+        run_name = f"resid_mlp2_{condition_name}_seed-{seed}"
         print(f"========================================")
         print(f"Running: {run_name}")
         print(f"========================================")

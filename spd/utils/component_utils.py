@@ -41,21 +41,14 @@ def calc_stochastic_component_mask_info(
                         if component_model is not None
                         else None
                     )
-                    if grad_ci_dict is not None:
-                        grad = grad_ci_dict[layer]
-
-                        # Compute importance from gradient magnitude
-                        importance = torch.abs(grad)
-                        importance_normalized = importance / (
-                            importance.sum(dim=-1, keepdim=True) + 1e-10
-                        )
-
-                        base_random = torch.rand_like(ci)
-
-                        # Invert: high importance -> low stochastic value -> more ablation
-                        stochastic_source = (1.0 - importance_normalized) * base_random
-                    else:
-                        raise ValueError("Gradients not available")
+                    assert grad_ci_dict is not None, "Gradients not available"
+                    grad = grad_ci_dict[layer]
+                    importance = grad.abs()
+                    importance_normalized = importance / (
+                        importance.sum(dim=-1, keepdim=True) + 1e-10
+                    )
+                    base_random = torch.rand_like(ci)
+                    stochastic_source = (1.0 - importance_normalized) * base_random
                 else:
                     stochastic_source = torch.rand_like(ci)
 

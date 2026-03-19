@@ -36,6 +36,7 @@ def _stochastic_recon_subset_loss_update(
             component_mask_sampling=sampling,
             weight_deltas=weight_deltas,
             router=router,
+            component_model=model,
         )
         for _ in range(n_mask_samples)
     ]
