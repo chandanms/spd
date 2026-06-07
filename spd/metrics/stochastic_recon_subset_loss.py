@@ -24,6 +24,7 @@ def _stochastic_recon_subset_loss_update(
     ci: dict[str, Float[Tensor, "... C"]],
     weight_deltas: dict[str, Float[Tensor, "d_out d_in"]] | None,
     router: Router,
+    store_adversarial_gradients: bool = False,
 ) -> tuple[Float[Tensor, ""], int]:
     assert ci, "Empty ci"
     device = get_obj_device(ci)
@@ -48,6 +49,38 @@ def _stochastic_recon_subset_loss_update(
         n_examples += out.shape.numel() if loss_type == "mse" else out.shape[:-1].numel()
         sum_loss += loss
 
+    if sampling == "gradient_informed":
+        final_loss = sum_loss / n_examples
+        grad_ci_dict: dict[str, Float[Tensor, "... C"]] = {}
+        for layer_name, ci_tensor in ci.items():
+            if ci_tensor.requires_grad:
+                grad = torch.autograd.grad(
+                    outputs=final_loss,
+                    inputs=ci_tensor,
+                    retain_graph=True,
+                    create_graph=False,
+                    allow_unused=True,
+                )[0]
+                if grad is not None:
+                    grad_ci_dict[layer_name] = grad.detach()
+        model._importance_sampling_gradients = grad_ci_dict
+
+    if store_adversarial_gradients:
+        final_loss = sum_loss / n_examples
+        adv_grad_dict: dict[str, Float[Tensor, "... C"]] = {}
+        for layer_name, ci_tensor in ci.items():
+            if ci_tensor.requires_grad:
+                grad = torch.autograd.grad(
+                    outputs=final_loss,
+                    inputs=ci_tensor,
+                    retain_graph=True,
+                    create_graph=False,
+                    allow_unused=True,
+                )[0]
+                if grad is not None:
+                    adv_grad_dict[layer_name] = grad.detach()
+        model._adversarial_gradients = adv_grad_dict
+
     return sum_loss, n_examples
 
 
@@ -67,6 +100,7 @@ def stochastic_recon_subset_loss(
     ci: dict[str, Float[Tensor, "... C"]],
     weight_deltas: dict[str, Float[Tensor, "d_out d_in"]] | None,
     routing: SubsetRoutingType,
+    store_adversarial_gradients: bool = False,
 ) -> Float[Tensor, ""]:
     sum_loss, n_examples = _stochastic_recon_subset_loss_update(
         model=model,
@@ -78,6 +112,7 @@ def stochastic_recon_subset_loss(
         ci=ci,
         weight_deltas=weight_deltas,
         router=get_subset_router(routing, batch.device),
+        store_adversarial_gradients=store_adversarial_gradients,
     )
     return _stochastic_recon_subset_loss_compute(sum_loss, n_examples)
 

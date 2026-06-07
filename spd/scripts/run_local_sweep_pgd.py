@@ -13,7 +13,7 @@ for exp in experiments:
     config_path = f"/home/chandan/spd/spd/experiments/tms/{exp}_pgd_config.yaml"
 
     for seed in seeds:
-        run_name = f"{exp}_pgd_seed-{seed}"
+        run_name = f"{exp}_pgd_revised_seed-{seed}"
         print(f"========================================")
         print(f"Running: {run_name}")
         print(f"========================================")

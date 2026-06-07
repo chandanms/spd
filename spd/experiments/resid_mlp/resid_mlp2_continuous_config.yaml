@@ -17,7 +17,7 @@ module_info:
     - module_pattern: "layers.*.mlp_out"
       C: 400
 use_delta_component: true
-sampling: "gradient_informed"
+sampling: "continuous"
 
 # --- Loss config ---
 loss_metric_configs:
@@ -25,9 +25,9 @@ loss_metric_configs:
       coeff: 0.0001
       pnorm: 2.0
     - classname: "StochasticReconLoss"
-      coeff: 2.0
+      coeff: 1.0
     - classname: "StochasticReconSubsetLoss"
-      coeff: 4.0
+      coeff: 1.0
 output_loss_type: mse
 
 # --- Training ---
