@@ -24,8 +24,8 @@ import wandb
 
 # (display_label, run_name_prefix, project)
 ConditionSpec = tuple[str, str, str]
-# (group_label, [ConditionSpec, ...])
-GroupSpec = tuple[str, list[ConditionSpec]]
+# (group_id, display_title, [ConditionSpec, ...])
+GroupSpec = tuple[str, str, list[ConditionSpec]]
 
 # Columns to skip when auto-discovering metrics
 _SKIP_PATTERNS = re.compile(
@@ -123,7 +123,8 @@ def align_and_aggregate(
 
 def plot_group(
     entity: str,
-    group_label: str,
+    group_id: str,
+    title: str,
     conditions: list[ConditionSpec],
     metrics: list[str] | None,
     samples: int,
@@ -131,30 +132,41 @@ def plot_group(
 ) -> None:
     """Fetch and plot one figure for a single group.
 
-    Each condition is fetched with its own metric keys to avoid empty responses
-    when keys span metrics that are never co-logged. Subplots are created for
-    the union of all metrics; conditions only appear in subplots where they have data.
+    Only metrics common to all conditions are plotted, so every condition has a
+    line in every subplot.
     """
-    # Per-condition: discover own metrics (or use fixed list) and fetch histories
-    # cond_data: {cond_label: {metric: agg_df}}  — each cond has its own agg per metric
-    cond_aggs: dict[str, pd.DataFrame] = {}
-    union_metrics: set[str] = set()
-
+    # Pass 1: discover metrics per condition
+    cond_discovered: dict[str, list[str]] = {}
     for cond_label, prefix, project in conditions:
         cond_metrics = metrics if metrics is not None else discover_metrics(entity, project, prefix)
-        if not cond_metrics:
-            continue
-        union_metrics.update(cond_metrics)
-        histories = fetch_run_histories(entity, project, prefix, cond_metrics, samples)
-        agg = align_and_aggregate(histories, cond_metrics)
-        cond_aggs[cond_label] = agg
+        if cond_metrics:
+            cond_discovered[cond_label] = cond_metrics
 
-    group_metrics = sorted(union_metrics)
-    if not group_metrics:
-        print(f"  No metrics found for group '{group_label}', skipping")
+    if not cond_discovered:
+        print(f"  No metrics found for group '{group_id}', skipping")
         return
 
-    print(f"  Union: {len(group_metrics)} metrics across {len(cond_aggs)} conditions")
+    # Intersection so every condition has data in every subplot
+    if metrics is not None:
+        group_metrics = sorted(metrics)
+    else:
+        metric_sets = [set(m) for m in cond_discovered.values()]
+        group_metrics = sorted(set.intersection(*metric_sets))
+
+    if not group_metrics:
+        print(f"  No common metrics for group '{group_id}', skipping")
+        return
+
+    print(f"  Intersection: {len(group_metrics)} metrics across {len(cond_discovered)} conditions")
+
+    # Pass 2: fetch histories using intersection metrics only
+    cond_aggs: dict[str, pd.DataFrame] = {}
+    for cond_label, prefix, project in conditions:
+        if cond_label not in cond_discovered:
+            continue
+        histories = fetch_run_histories(entity, project, prefix, group_metrics, samples)
+        agg = align_and_aggregate(histories, group_metrics)
+        cond_aggs[cond_label] = agg
 
     n_metrics = len(group_metrics)
     n_cols = min(4, n_metrics)
@@ -186,13 +198,22 @@ def plot_group(
         axes[row][col].set_visible(False)
 
     handles, labels = axes[0][0].get_legend_handles_labels()
-    fig.legend(handles, labels, loc="upper right", fontsize=9)
-    fig.suptitle(group_label, fontsize=13, fontweight="bold")
-    fig.tight_layout(rect=(0, 0, 1, 0.97))
+    n_legend_cols = min(4, len(labels))
+    fig.suptitle(title, fontsize=13, fontweight="bold")
+    fig.legend(
+        handles,
+        labels,
+        loc="upper center",
+        bbox_to_anchor=(0.5, 0.95),
+        ncol=n_legend_cols,
+        fontsize=9,
+        bbox_transform=fig.transFigure,
+    )
+    fig.tight_layout(rect=(0, 0.02, 1, 0.92))
 
     if output_dir is not None:
         output_dir.mkdir(parents=True, exist_ok=True)
-        path = output_dir / f"{group_label}.png"
+        path = output_dir / f"{group_id}.png"
         fig.savefig(path, dpi=150, bbox_inches="tight")
         print(f"  Saved {path}")
     else:
@@ -212,11 +233,11 @@ def plot_groups(
 
     Args:
         metrics: Fixed list of metric keys to plot for all groups. Pass None to
-                 auto-discover per group (recommended — metrics differ by experiment).
+                 auto-discover and intersect per group (recommended — metrics differ by experiment).
     """
-    for group_label, conditions in groups:
-        print(f"\n[{group_label}]")
-        plot_group(entity, group_label, conditions, metrics, samples, output_dir)
+    for group_id, title, conditions in groups:
+        print(f"\n[{group_id}]")
+        plot_group(entity, group_id, title, conditions, metrics, samples, output_dir)
 
 
 # ── CONFIG ────────────────────────────────────────────────────────────────────
@@ -226,48 +247,83 @@ DEFAULT_PROJECT = "spd-gradient-informed-sampling"
 # Each group produces one figure. Each condition is a colored mean±std line.
 # Condition format: (display_label, run_name_prefix, project)
 GROUPS: list[GroupSpec] = [
+    # (
+    #     "tms_5-2",
+    #     [
+    #         ("pgd", "tms_5-2_pgd_revised", DEFAULT_PROJECT),
+    #         ("continuous", "tms_5-2_continuous_sampling", DEFAULT_PROJECT),
+    #         ("gradient_informed", "tms_5-2_gradient_informed_sampling", DEFAULT_PROJECT),
+    #     ],
+    # ),
+    # (
+    #     "tms_5-2-id",
+    #     [
+    #         ("pgd", "tms_5-2-id_pgd_revised", DEFAULT_PROJECT),
+    #         ("continuous", "tms_5-2-id_continuous_sampling", DEFAULT_PROJECT),
+    #         ("gradient_informed", "tms_5-2-id_gradient_informed_sampling", DEFAULT_PROJECT),
+    #     ],
+    # ),
+    # (
+    #     "tms_40-10",
+    #     [
+    #         ("pgd", "tms_40-10_pgd_revised", DEFAULT_PROJECT),
+    #         ("continuous", "tms_40-10_continuous_sampling", DEFAULT_PROJECT),
+    #         ("gradient_informed", "tms_40-10_gradient_informed_sampling", DEFAULT_PROJECT),
+    #     ],
+    # ),
+    # (
+    #     "tms_40-10-id",
+    #     [
+    #         ("pgd", "tms_40-10-id_pgd_revised", DEFAULT_PROJECT),
+    #         ("continuous", "tms_40-10-id_continuous_sampling", DEFAULT_PROJECT),
+    #         ("gradient_informed", "tms_40-10-id_gradient_informed_sampling", DEFAULT_PROJECT),
+    #     ],
+    # ),
+    # (
+    #     "resid_mlp2",
+    #     [
+    #         ("subset_loss_continuous", "resid_mlp2_continuous_subset", DEFAULT_PROJECT),
+    #         ("layerwise_loss_continuous", "resid_mlp2_continuous", DEFAULT_PROJECT),
+    #         ("subset_loss_pgd", "resid_mlp2_pgd", "spd"),
+    #         (
+    #             "subset_loss_gradient_informed",
+    #             "resid_mlp2_subset_gradient_informed_2.0",
+    #             DEFAULT_PROJECT,
+    #         ),
+    #     ],
+    # ),
     (
-        "tms_5-2",
+        "resid_mlp2_pgd_vs_gradient-informed",
+        "resid_mlp2: Comparison of hyperparameters in PGD and gradient informed sampling",
         [
-            ("continuous", "tms_5-2_continuous_sampling", DEFAULT_PROJECT),
-            ("gradient", "tms_5-2_gradient_sampling", DEFAULT_PROJECT),
-            ("gradient_informed", "tms_5-2_gradient_informed_sampling", DEFAULT_PROJECT),
-        ],
-    ),
-    (
-        "tms_5-2-id",
-        [
-            ("continuous", "tms_5-2-id_continuous_sampling", DEFAULT_PROJECT),
-            ("gradient", "tms_5-2-id_gradient_sampling", DEFAULT_PROJECT),
-            ("gradient_informed", "tms_5-2-id_gradient_informed_sampling", DEFAULT_PROJECT),
-        ],
-    ),
-    (
-        "tms_40-10",
-        [
-            ("continuous", "tms_40-10_continuous_sampling", DEFAULT_PROJECT),
-            ("gradient", "tms_40-10_gradient_sampling", DEFAULT_PROJECT),
-            ("gradient_informed", "tms_40-10_gradient_informed_sampling", DEFAULT_PROJECT),
-        ],
-    ),
-    (
-        "tms_40-10-id",
-        [
-            ("continuous", "tms_40-10-id_continuous_sampling", DEFAULT_PROJECT),
-            ("gradient", "tms_40-10-id_gradient_sampling", DEFAULT_PROJECT),
-            ("gradient_informed", "tms_40-10-id_gradient_informed_sampling", DEFAULT_PROJECT),
-        ],
-    ),
-    (
-        "resid_mlp2",
-        [
-            ("subset_loss_continuous", "resid_mlp2_pgd", "spd"),
-            ("total_loss_gradient_informed", "resid_mlp2_gradient_informed", DEFAULT_PROJECT),
+            ("subset_loss_pgd", "resid_mlp2_pgd", "spd"),
+            ("subset_loss_pgd_nsteps2.0", "resid_mlp2_pgd_nsteps_2.0", "spd"),
+            ("subset_loss_pgd_nsteps3.0", "resid_mlp2_pgd_nsteps_3.0", DEFAULT_PROJECT),
+            ("subset_loss_pgd_nsteps4.0", "resid_mlp2_pgd_nsteps_4.0", DEFAULT_PROJECT),
+            ("subset_loss_pgd_nsteps5.0", "resid_mlp2_pgd_nsteps_5.0", DEFAULT_PROJECT),
             (
                 "subset_loss_gradient_informed",
-                "resid_mlp2_subset_gradient_informed",
+                "resid_mlp2_subset_gradient_informed_2.0",
                 DEFAULT_PROJECT,
             ),
+            (
+                "subset_loss_gradient_informed_coeff3.0",
+                "resid_mlp2_gradient_informed_3.0",
+                DEFAULT_PROJECT,
+            ),
+            (
+                "subset_loss_gradient_informed_coeff4.0",
+                "resid_mlp2_gradient_informed_4.0",
+                DEFAULT_PROJECT,
+            ),
+            (
+                "subset_loss_gradient_informed_coeff5.0",
+                "resid_mlp2_gradient_informed_5.0",
+                DEFAULT_PROJECT,
+            ),
+            ("subset_loss_pgd_coeff3.0_nsteps1.0", "resid_mlp2_pgd_3.0", DEFAULT_PROJECT),
+            # ("subset_loss_pgd_coeff4.0", "resid_mlp2_pgd_4.0", DEFAULT_PROJECT),
+            ("subset_loss_pgd_coeff5.0_nsteps1.0", "resid_mlp2_pgd_5.0", DEFAULT_PROJECT),
         ],
     ),
 ]
