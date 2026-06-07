@@ -1,4 +1,4 @@
-# TMS 40-10 w/ fixed identity
+# TMS 40-10 w/ fixed identity - PGD
 # --- WandB ---
 wandb_project: spd-gradient-informed-sampling
 wandb_run_name: null
@@ -10,7 +10,7 @@ n_mask_samples: 1
 ci_fn_type: "mlp"
 ci_fn_hidden_dims: [16]
 sigmoid_type: "leaky_hard"
-sampling: "gradient_informed"
+sampling: "continuous"
 module_info:
   - module_pattern: "linear1"
     C: 200
@@ -24,10 +24,18 @@ loss_metric_configs:
   - classname: "ImportanceMinimalityLoss"
     coeff: 1e-4
     pnorm: 2.0
-  - classname: "StochasticReconLoss"
+  - classname: "PGDReconLoss"
     coeff: 1.0
-  - classname: "StochasticReconLayerwiseLoss"
+    init: random
+    step_size: 1.0
+    n_steps: 1
+    mask_scope: shared_across_batch
+  - classname: "PGDReconLayerwiseLoss"
     coeff: 1.0
+    init: random
+    step_size: 1.0
+    n_steps: 1
+    mask_scope: shared_across_batch
 output_loss_type: "mse"
 
 # --- Training ---

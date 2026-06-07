@@ -28,13 +28,14 @@ def _stochastic_recon_loss_update(
     device = get_obj_device(ci)
     sum_loss = torch.tensor(0.0, device=device)
     n_examples = 0
-
     stoch_mask_infos_list = [
         calc_stochastic_component_mask_info(
             causal_importances=ci,
             component_mask_sampling=sampling,
             weight_deltas=weight_deltas,
             router=AllLayersRouter(),
+            component_model=model,
+            use_gradient_informed=False,
         )
         for _ in range(n_mask_samples)
     ]
@@ -73,7 +74,28 @@ def stochastic_recon_loss(
         ci,
         weight_deltas,
     )
-    return _stochastic_recon_loss_compute(sum_loss, n_examples)
+    final_loss = _stochastic_recon_loss_compute(sum_loss, n_examples)
+
+    # Extract gradients for gradient-informed sampling
+    if sampling == "gradient_informed":
+        grad_ci_dict = {}
+        for layer_name, ci_tensor in ci.items():
+            if ci_tensor.requires_grad:
+                grad = torch.autograd.grad(
+                    outputs=final_loss,
+                    inputs=ci_tensor,
+                    retain_graph=True,
+                    create_graph=False,
+                    allow_unused=True,
+                )[0]
+
+                if grad is not None:
+                    grad_ci_dict[layer_name] = grad.detach()
+
+        # Store on model instance for layerwise loss to access
+        model._importance_sampling_gradients = grad_ci_dict
+
+    return final_loss
 
 
 class StochasticReconLoss(Metric):

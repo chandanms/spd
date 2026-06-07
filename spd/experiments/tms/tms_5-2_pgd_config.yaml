@@ -1,4 +1,4 @@
-# TMS 40-10 w/ fixed identity
+# TMS 5-2 (Non-identity) - PGD
 # --- WandB ---
 wandb_project: spd-gradient-informed-sampling
 wandb_run_name: null
@@ -10,30 +10,36 @@ n_mask_samples: 1
 ci_fn_type: "mlp"
 ci_fn_hidden_dims: [16]
 sigmoid_type: "leaky_hard"
-sampling: "gradient_informed"
+sampling: "continuous"
 module_info:
   - module_pattern: "linear1"
-    C: 200
+    C: 20
   - module_pattern: "linear2"
-    C: 200
-  - module_pattern: "hidden_layers.0"
-    C: 200
+    C: 20
 use_delta_component: true
 
 loss_metric_configs:
   - classname: "ImportanceMinimalityLoss"
-    coeff: 1e-4
-    pnorm: 2.0
-  - classname: "StochasticReconLoss"
+    coeff: 3e-3
+    pnorm: 1.0
+  - classname: "PGDReconLoss"
     coeff: 1.0
-  - classname: "StochasticReconLayerwiseLoss"
+    init: random
+    step_size: 1.0
+    n_steps: 1
+    mask_scope: shared_across_batch
+  - classname: "PGDReconLayerwiseLoss"
     coeff: 1.0
-output_loss_type: "mse"
+    init: random
+    step_size: 1.0
+    n_steps: 1
+    mask_scope: shared_across_batch
+output_loss_type: mse
 
 # --- Training ---
 batch_size: 4096
 eval_batch_size: 4096
-steps: 20_000
+steps: 10_000
 lr_schedule:
   start_val: 1e-3
   fn_type: cosine
@@ -59,16 +65,14 @@ eval_metric_configs:
   - classname: "ComponentActivationDensity"
   - classname: "PermutedCIPlots"
     identity_patterns: ["linear1", "linear2"]
-    dense_patterns: ["hidden_layers.0"]
+    dense_patterns: null
   - classname: "IdentityCIError"
     identity_ci:
       - layer_pattern: "linear1"
-        n_features: 40
+        n_features: 5
       - layer_pattern: "linear2"
-        n_features: 40
-    dense_ci:
-      - layer_pattern: "hidden_layers.0"
-        k: 10
+        n_features: 5
+    dense_ci: null
   - classname: "CI_L0"
     groups: null
   - classname: "CIMeanPerComponent"
@@ -76,7 +80,7 @@ eval_metric_configs:
 
 # --- Pretrained model info ---
 pretrained_model_class: "spd.experiments.tms.models.TMSModel"
-pretrained_model_path: "wandb:goodfire/spd-pre-Sep-2025/runs/eggs3wp8" # 1 hidden w/fixed identity
+pretrained_model_path: "wandb:goodfire/spd-pre-Sep-2025/runs/0hsp07o4"
 
 # --- Task Specific ---
 task_config:

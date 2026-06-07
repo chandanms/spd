@@ -1,3 +1,7 @@
+# TYPE_CHECKING import to avoid circular dependency at runtime
+from multiprocessing import Value
+from typing import TYPE_CHECKING
+
 import torch
 from jaxtyping import Float
 from torch import Tensor
@@ -6,12 +10,17 @@ from spd.configs import SamplingType
 from spd.models.components import ComponentsMaskInfo, WeightDeltaAndMask, make_mask_infos
 from spd.routing import Router
 
+if TYPE_CHECKING:
+    from spd.models.component_model import ComponentModel
+
 
 def calc_stochastic_component_mask_info(
     causal_importances: dict[str, Float[Tensor, "... C"]],
     component_mask_sampling: SamplingType,
     weight_deltas: dict[str, Float[Tensor, "d_out d_in"]] | None,
     router: Router,
+    component_model: "ComponentModel | None" = None,
+    use_gradient_informed: bool = True,
 ) -> dict[str, ComponentsMaskInfo]:
     ci_sample = next(iter(causal_importances.values()))
     leading_dims = ci_sample.shape[:-1]
@@ -25,6 +34,24 @@ def calc_stochastic_component_mask_info(
                 stochastic_source = torch.randint(0, 2, ci.shape, device=device).float()
             case "continuous":
                 stochastic_source = torch.rand_like(ci)
+            case "gradient_informed":
+                if use_gradient_informed:
+                    grad_ci_dict = (
+                        getattr(component_model, "_importance_sampling_gradients", None)
+                        if component_model is not None
+                        else None
+                    )
+                    assert grad_ci_dict is not None, "Gradients not available"
+                    grad = grad_ci_dict[layer]
+                    importance = grad.abs()
+                    importance_normalized = importance / (
+                        importance.sum(dim=-1, keepdim=True) + 1e-10
+                    )
+                    base_random = torch.rand_like(ci)
+                    stochastic_source = (1.0 - importance_normalized) * base_random
+                else:
+                    stochastic_source = torch.rand_like(ci)
+
         component_masks[layer] = ci + (1 - ci) * stochastic_source
 
     weight_deltas_and_masks: dict[str, WeightDeltaAndMask] | None = None
