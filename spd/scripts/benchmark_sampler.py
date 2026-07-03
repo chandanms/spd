@@ -1,19 +1,21 @@
 """
-Sampler Benchmark: Gradient-informed vs Uniform (continuous) sampling.
+Sampler Benchmark: Gradient-informed variants vs Uniform (continuous) sampling.
 
-Trains a ComponentModel with uniform (continuous) sampling. Benchmarks both
-samplers at step 100 and then every 1000 steps up to the final step.
+Trains a ComponentModel with uniform (continuous) sampling. At step 100 and then
+every 1000 steps up to the final step, benchmarks the uniform baseline against
+every gradient-informed variant (per_component, per_example, mean, power_iter).
 
 At each checkpoint, for each sampler, n_benchmark_batches batches are evaluated.
 Each batch yields one draw of the stochastic mask (n_draws=1 by default, matching
 training, since batch_size ~4096 already gives a stable per-batch ΔL_recon estimate).
 
 Metrics logged per sampler per checkpoint:
-  L_recon(unmasked) = MSE(target_out, target_out) = 0 by definition (logged as sanity check)
-  L_recon(masked)   = MSE(masked_out, target_out)
-  ΔL_recon          = L_recon(masked) - L_recon(unmasked) = L_recon(masked)
+  ΔL_recon = L_recon(masked) - L_recon(unmasked) = L_recon(masked), since
+  L_recon(unmasked) = MSE(target_out, target_out) = 0 by definition.
 
-A paired t-test across the n_benchmark_batches observations compares GI vs uniform.
+A paired t-test across the n_benchmark_batches observations compares each GI
+variant against uniform. For power_iter, the fraction of batch gradient energy
+captured by the top direction is also logged.
 
 Results are logged to WandB under the project defined in the config.
 
@@ -31,8 +33,9 @@ from __future__ import annotations
 
 import argparse
 import io
+from collections.abc import Iterator
 from pathlib import Path
-from typing import Any, Iterator, cast
+from typing import Any, cast
 
 import matplotlib
 
@@ -48,7 +51,7 @@ from PIL import Image
 from scipy import stats as scipy_stats
 from tqdm import tqdm
 
-from spd.configs import Config, PGDMultiBatchConfig
+from spd.configs import Config, GIVariant, PGDMultiBatchConfig
 from spd.eval import evaluate
 from spd.identity_insertion import insert_identity_operations_
 from spd.log import logger
@@ -57,6 +60,7 @@ from spd.models.component_model import ComponentModel
 from spd.models.components import ComponentsMaskInfo, make_mask_infos
 from spd.routing import AllLayersRouter
 from spd.run_spd import get_unique_metric_configs, run_faithfulness_warmup
+from spd.utils.component_utils import gradient_informed_source
 from spd.utils.distributed_utils import get_device
 from spd.utils.general_utils import get_scheduled_value, set_seed
 from spd.utils.module_utils import expand_module_patterns
@@ -185,37 +189,53 @@ def compute_importance_gradients(
 # Sampling
 # ---------------------------------------------------------------------------
 
+# Samplers compared at each checkpoint: the uniform baseline plus every GI variant.
+GI_VARIANTS: list[GIVariant] = ["per_component", "per_example", "mean", "power_iter"]
+SAMPLER_KEYS: list[str] = ["uniform", *GI_VARIANTS]
+
 
 def sample_component_masks(
     ci: dict[str, torch.Tensor],
     importance_grads: dict[str, torch.Tensor] | None,
     weight_deltas: dict[str, torch.Tensor] | None,
-) -> tuple[dict[str, ComponentsMaskInfo], dict[str, torch.Tensor]]:
+    variant: GIVariant,
+    coeff: float,
+    power_iters: int,
+) -> tuple[dict[str, ComponentsMaskInfo], dict[str, torch.Tensor], float | None]:
     """Draw one set of component masks and return the raw stochastic sources.
 
-    For uniform sampling:      stochastic_source ~ Uniform[0, 1]^{C}
-    For gradient-informed:     stochastic_source = (1 - importance_normalised) * Uniform[0, 1]^{C}
-      where importance_normalised = |grad| / sum(|grad|)
+    When `importance_grads` is None the source is uniform (the baseline). Otherwise
+    the gradient-informed `variant` biases the source toward the high-recon-error
+    direction (see `gradient_informed_source`).
 
     Returns:
         mask_infos: passed directly to model forward.
         sources: dict layer -> stochastic_source tensor [B, C] for covariance tracking.
+        captured: mean fraction of batch gradient energy in the top direction
+            (variant="power_iter" only), else None.
     """
     component_masks: dict[str, torch.Tensor] = {}
     sources: dict[str, torch.Tensor] = {}
+    captured_per_layer: list[float] = []
 
     for layer, g_c in ci.items():
         if importance_grads is not None and layer in importance_grads:
-            grad = importance_grads[layer]
-            importance = grad.abs()
-            importance_normalised = importance / (importance.sum(dim=-1, keepdim=True) + 1e-10)
-            base_random = torch.rand_like(g_c)
-            source = (1.0 - importance_normalised) * base_random
+            source, captured = gradient_informed_source(
+                grad=importance_grads[layer],
+                ci=g_c,
+                variant=variant,
+                coeff=coeff,
+                power_iters=power_iters,
+            )
+            if captured is not None:
+                captured_per_layer.append(captured)
         else:
             source = torch.rand_like(g_c)
 
         sources[layer] = source.detach()
         component_masks[layer] = g_c + (1.0 - g_c) * source
+
+    mean_captured = float(np.mean(captured_per_layer)) if captured_per_layer else None
 
     leading_dims = next(iter(ci.values())).shape[:-1]
     device = next(iter(ci.values())).device
@@ -239,7 +259,7 @@ def sample_component_masks(
         routing_masks=routing_masks,
     )
 
-    return mask_infos, sources
+    return mask_infos, sources, mean_captured
 
 
 def _flatten_sources(sources: dict[str, torch.Tensor]) -> torch.Tensor:
@@ -266,100 +286,69 @@ def _pil_from_fig(fig: plt.Figure) -> Image.Image:
     return Image.open(buf).copy()
 
 
-def _delta_line_chart(
+def _delta_wandb_charts(
     history: list[dict[str, float]],
-) -> Image.Image:
-    """Two-panel line chart of ΔL_recon vs training step.
+) -> tuple[Any, Any]:
+    """Interactive WandB line charts of ΔL_recon vs training step.
 
-    Top panel: log-scale ΔL_recon for both samplers (log y-axis spreads the
-    late-training region where the gap stabilises and makes a constant
-    multiplicative difference appear as a constant vertical offset).
-    Bottom panel: ratio ΔL_GI / ΔL_uniform — ratio > 1 means GI finds
-    better ablations.
-
-    Each entry in history: {"step": float, "uniform_mean": float, "uniform_std": float,
-                             "gi_mean": float, "gi_std": float}.
-    Shaded bands show ±std across the n_benchmark_batches evaluated at that checkpoint.
+    Returns two line-series charts over all samplers: one for the raw ΔL_recon
+    values and one for each GI variant's ratio to uniform (> 1 = better than uniform).
     """
     steps = [h["step"] for h in history]
-    uni_mean = np.array([h["uniform_mean"] for h in history])
-    gi_mean = np.array([h["gi_mean"] for h in history])
-    uni_std = np.array([h["uniform_std"] for h in history])
-    gi_std = np.array([h["gi_std"] for h in history])
+    uniform_arr = np.array([h["uniform_mean"] for h in history])
 
-    fig, (ax_top, ax_bot) = plt.subplots(2, 1, figsize=(8, 7), sharex=True)
+    delta_chart = wandb.plot.line_series(
+        xs=steps,
+        ys=[[h[f"{key}_mean"] for h in history] for key in SAMPLER_KEYS],
+        keys=SAMPLER_KEYS,
+        title="ΔL_recon vs Training Step",
+        xname="Training Step",
+    )
 
-    # Top: log-scale ΔL_recon
-    ax_top.plot(steps, uni_mean, "o-", color="salmon", linewidth=1.5, markersize=5, label="Uniform")
-    ax_top.plot(
-        steps,
-        gi_mean,
-        "o-",
-        color="steelblue",
-        linewidth=1.5,
-        markersize=5,
-        label="Gradient-Informed",
-    )
-    ax_top.fill_between(
-        steps,
-        np.maximum(uni_mean - uni_std, 1e-12),
-        uni_mean + uni_std,
-        color="salmon",
-        alpha=0.15,
-    )
-    ax_top.fill_between(
-        steps,
-        np.maximum(gi_mean - gi_std, 1e-12),
-        gi_mean + gi_std,
-        color="steelblue",
-        alpha=0.15,
-    )
-    ax_top.set_yscale("log")
-    ax_top.set_ylabel("Mean ΔL_recon  (log scale, ↑ better)")
-    ax_top.set_title("ΔL_recon vs Training Step  (shaded = ±std across benchmark batches)")
-    ax_top.legend(fontsize=9)
-
-    # Bottom: ratio GI / uniform
     with np.errstate(divide="ignore", invalid="ignore"):
-        ratio = np.where(uni_mean > 0, gi_mean / uni_mean, np.nan)
-    ax_bot.plot(steps, ratio, "o-", color="purple", linewidth=1.5, markersize=5)
-    ax_bot.axhline(1.0, color="gray", linestyle="--", linewidth=0.8)
-    ax_bot.set_xlabel("Training step")
-    ax_bot.set_ylabel("ΔL_GI / ΔL_uniform  (> 1 = GI better)")
-    ax_bot.set_title("Ratio: GI / Uniform")
-
-    fig.tight_layout()
-    return _pil_from_fig(fig)
+        ratios = [
+            list(
+                np.where(
+                    uniform_arr > 0,
+                    np.array([h[f"{key}_mean"] for h in history]) / uniform_arr,
+                    float("nan"),
+                )
+            )
+            for key in GI_VARIANTS
+        ]
+    ratio_chart = wandb.plot.line_series(
+        xs=steps,
+        ys=ratios,
+        keys=GI_VARIANTS,
+        title="ΔL_recon Ratio: GI variant / Uniform (> 1 = better than uniform)",
+        xname="Training Step",
+    )
+    return delta_chart, ratio_chart
 
 
 def _covariance_heatmaps(
-    uniform_stacked: torch.Tensor,
-    gi_stacked: torch.Tensor,
+    stacked: dict[str, torch.Tensor],
 ) -> Image.Image:
-    """Side-by-side correlation matrices of sampled sources for both samplers.
+    """One correlation-matrix panel per sampler in `stacked`.
 
     Uses the correlation matrix (not raw covariance) so the diagonal is always 1
     and is masked white — leaving only inter-component correlations visible on a
-    [-1, 1] scale. High off-diagonal values in the GI panel indicate the sampler
-    is collapsing onto correlated component groups (the local-extremum failure mode).
-    The subtitle shows the mean per-component variance (diagonal of cov) as the
+    [-1, 1] scale. High off-diagonal values in a GI panel indicate that sampler is
+    collapsing onto correlated component groups (the local-extremum failure mode).
+    Each subtitle shows the mean per-component variance (diagonal of cov) as the
     scalar summary of total exploration breadth.
     """
-    fig, axes = plt.subplots(1, 2, figsize=(14, 6))
-    for ax, stacked, title in zip(
-        axes,
-        [uniform_stacked, gi_stacked],
-        ["Uniform", "Gradient-Informed"],
-        strict=True,
-    ):
-        arr = stacked.float().numpy()
-        corr = np.corrcoef(arr.T)
-        mean_var = float(np.diag(torch.cov(stacked.float().T).numpy()).mean())
+    keys = [k for k in SAMPLER_KEYS if k in stacked]
+    fig, axes = plt.subplots(1, len(keys), figsize=(7 * len(keys), 6), squeeze=False)
+    for ax, key in zip(axes[0], keys, strict=True):
+        source = stacked[key].float()
+        corr = np.corrcoef(source.numpy().T)
+        mean_var = float(np.diag(torch.cov(source.T).numpy()).mean())
         # Mask diagonal so it renders white — only off-diagonal correlations are shown.
         masked = np.where(np.eye(corr.shape[0], dtype=bool), np.nan, corr)
         im = ax.imshow(masked, aspect="auto", cmap="coolwarm", vmin=-1, vmax=1)
         plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
-        ax.set_title(f"{title}  (mean var={mean_var:.4f})", fontsize=11)
+        ax.set_title(f"{key}  (mean var={mean_var:.4f})", fontsize=11)
         ax.set_xlabel("Component index (all layers flattened)")
         ax.set_ylabel("Component index (all layers flattened)")
     fig.suptitle(
@@ -382,27 +371,30 @@ def benchmark_samplers(
     device: str,
     n_batches: int,
     n_draws: int,
+    gi_coeff: float,
+    gi_power_iters: int,
 ) -> dict[str, Any]:
-    """Compare uniform and gradient-informed samplers on a frozen ComponentModel.
+    """Compare the uniform baseline against every GI variant on a frozen ComponentModel.
 
     For each sampler the per-batch mean ΔL_recon is collected. A paired t-test
-    (ttest_rel) across batches and empirical covariance matrices are also computed.
+    (ttest_rel) of each GI variant against uniform and empirical correlation
+    matrices are also computed. L_recon(unmasked) = 0 by definition, so
+    ΔL_recon = L_recon(masked).
 
     Returns a flat dict suitable for WandB logging (images included).
     """
     model.eval()
 
-    # Detach weight deltas once — used for both samplers.
+    # Detach weight deltas once — shared across all samplers.
     weight_deltas: dict[str, torch.Tensor] | None = (
         {k: v.detach() for k, v in model.calc_weight_deltas().items()}
         if config.use_delta_component
         else None
     )
 
-    per_batch_unmasked: dict[str, list[float]] = {"uniform": [], "gi": []}
-    per_batch_masked: dict[str, list[float]] = {"uniform": [], "gi": []}
-    per_batch_delta: dict[str, list[float]] = {"uniform": [], "gi": []}
-    all_sources: dict[str, list[torch.Tensor]] = {"uniform": [], "gi": []}
+    per_batch_delta: dict[str, list[float]] = {key: [] for key in SAMPLER_KEYS}
+    all_sources: dict[str, list[torch.Tensor]] = {key: [] for key in SAMPLER_KEYS}
+    captured_vals: list[float] = []
 
     for _ in range(n_batches):
         batch, _ = dataset.generate_batch(config.eval_batch_size)  # type: ignore[attr-defined]
@@ -413,9 +405,6 @@ def benchmark_samplers(
             result = model(batch, cache_type="input")
         target_out = result.output.detach()
         pre_weight_acts = {k: v.detach() for k, v in result.cache.items()}
-
-        # L_recon(unmasked) = MSE(target_out, target_out) = 0 by definition.
-        l_recon_unmasked = ((target_out - target_out) ** 2).mean().item()
 
         with torch.no_grad():
             ci_outputs = model.calc_causal_importances(pre_weight_acts, sampling="continuous")
@@ -431,50 +420,50 @@ def benchmark_samplers(
                 weight_deltas=weight_deltas,
             )
 
-        for key, grads in [("uniform", None), ("gi", importance_grads)]:
+        for key in SAMPLER_KEYS:
+            grads = None if key == "uniform" else importance_grads
+            variant = cast(GIVariant, "per_component" if key == "uniform" else key)
             draw_masked: list[float] = []
 
             with torch.no_grad():
                 for _ in range(n_draws):
-                    mask_infos, sources = sample_component_masks(
+                    mask_infos, sources, captured = sample_component_masks(
                         ci=ci,
                         importance_grads=grads,
                         weight_deltas=weight_deltas,
+                        variant=variant,
+                        coeff=gi_coeff,
+                        power_iters=gi_power_iters,
                     )
                     masked_out = model(batch, mask_infos=mask_infos)
                     l_recon_masked = ((masked_out - target_out) ** 2).mean().item()
                     draw_masked.append(l_recon_masked)
                     all_sources[key].append(_flatten_sources(sources))
+                    if captured is not None:
+                        captured_vals.append(captured)
 
-            mean_masked = float(np.mean(draw_masked))
-            per_batch_unmasked[key].append(l_recon_unmasked)
-            per_batch_masked[key].append(mean_masked)
-            per_batch_delta[key].append(mean_masked - l_recon_unmasked)
-
-    # Primary comparison: paired t-test on ΔL_recon across batches
-    uniform_delta = np.array(per_batch_delta["uniform"])
-    gi_delta = np.array(per_batch_delta["gi"])
-    ttest_result = scipy_stats.ttest_rel(gi_delta, uniform_delta)
-    t_stat = cast(float, ttest_result[0])
-    p_value = cast(float, ttest_result[1])
+            per_batch_delta[key].append(float(np.mean(draw_masked)))
 
     # Exploration analysis: stack all draws → [N, total_C]
     stacked: dict[str, torch.Tensor] = {
-        key: torch.cat(all_sources[key], dim=0).cpu().float() for key in ("uniform", "gi")
+        key: torch.cat(all_sources[key], dim=0).cpu().float() for key in SAMPLER_KEYS
     }
 
     out: dict[str, Any] = {}
-    for key in ("uniform", "gi"):
-        out[f"{key}/mean_l_recon_unmasked"] = float(np.mean(per_batch_unmasked[key]))
-        out[f"{key}/std_l_recon_unmasked"] = float(np.std(per_batch_unmasked[key]))
-        out[f"{key}/mean_l_recon_masked"] = float(np.mean(per_batch_masked[key]))
-        out[f"{key}/std_l_recon_masked"] = float(np.std(per_batch_masked[key]))
-        out[f"{key}/mean_delta_l_recon"] = float(np.mean(per_batch_delta[key]))
-        out[f"{key}/std_delta_l_recon"] = float(np.std(per_batch_delta[key]))
-    out["t_stat"] = t_stat
-    out["p_value"] = p_value
+    uniform_delta = np.array(per_batch_delta["uniform"])
+    for key in SAMPLER_KEYS:
+        delta = np.array(per_batch_delta[key])
+        out[f"{key}/mean_delta_l_recon"] = float(delta.mean())
+        out[f"{key}/std_delta_l_recon"] = float(delta.std())
+        if key != "uniform":
+            ttest_result = scipy_stats.ttest_rel(delta, uniform_delta)
+            out[f"{key}/t_stat"] = cast(float, ttest_result[0])
+            out[f"{key}/p_value"] = cast(float, ttest_result[1])
+    if captured_vals:
+        out["power_iter/mean_captured"] = float(np.mean(captured_vals))
+
     # Chart (PIL Image — caller wraps in wandb.Image before logging)
-    out["chart/source_cov"] = _covariance_heatmaps(stacked["uniform"], stacked["gi"])
+    out["chart/source_cov"] = _covariance_heatmaps(stacked)
     return out
 
 
@@ -495,8 +484,9 @@ def run_benchmark_training(
 ) -> None:
     """Train a ComponentModel with uniform sampling.
 
-    Benchmarks both samplers at step 100, then every 1000 steps, always including
-    the final step. Logs metrics and covariance heatmaps to WandB.
+    Benchmarks the uniform baseline against every GI variant at step 100, then
+    every 1000 steps, always including the final step. Logs metrics and
+    correlation heatmaps to WandB.
     """
     assert config.sampling == "continuous", (
         f"Training must use uniform (continuous) sampling, got {config.sampling!r}. "
@@ -602,29 +592,25 @@ def run_benchmark_training(
                 device=device,
                 n_batches=n_benchmark_batches,
                 n_draws=n_draws,
+                gi_coeff=config.gi_coeff,
+                gi_power_iters=config.gi_power_iters,
             )
 
-            tqdm.write(
-                f"  Uniform : l_masked={bench['uniform/mean_l_recon_masked']:.6f}"
-                f"  l_unmasked={bench['uniform/mean_l_recon_unmasked']:.6f}"
-                f"  ΔL={bench['uniform/mean_delta_l_recon']:.6f}"
-                f" ± {bench['uniform/std_delta_l_recon']:.6f}"
-            )
-            tqdm.write(
-                f"  GI      : l_masked={bench['gi/mean_l_recon_masked']:.6f}"
-                f"  l_unmasked={bench['gi/mean_l_recon_unmasked']:.6f}"
-                f"  ΔL={bench['gi/mean_delta_l_recon']:.6f}"
-                f" ± {bench['gi/std_delta_l_recon']:.6f}"
-            )
-            tqdm.write(f"  t-stat  : {bench['t_stat']:.4f}   p-value: {bench['p_value']:.4e}")
+            for key in SAMPLER_KEYS:
+                line = (
+                    f"  {key:13s}: ΔL={bench[f'{key}/mean_delta_l_recon']:.6f}"
+                    f" ± {bench[f'{key}/std_delta_l_recon']:.6f}"
+                )
+                if key != "uniform":
+                    line += f"   t={bench[f'{key}/t_stat']:.3f}  p={bench[f'{key}/p_value']:.2e}"
+                tqdm.write(line)
+            if "power_iter/mean_captured" in bench:
+                tqdm.write(f"  power_iter captured energy: {bench['power_iter/mean_captured']:.4f}")
 
             delta_history.append(
                 {
                     "step": float(step),
-                    "uniform_mean": bench["uniform/mean_delta_l_recon"],
-                    "uniform_std": bench["uniform/std_delta_l_recon"],
-                    "gi_mean": bench["gi/mean_delta_l_recon"],
-                    "gi_std": bench["gi/std_delta_l_recon"],
+                    **{f"{key}_mean": bench[f"{key}/mean_delta_l_recon"] for key in SAMPLER_KEYS},
                 }
             )
 
@@ -637,9 +623,9 @@ def run_benchmark_training(
                     if not isinstance(v, Image.Image)
                 }
                 wandb_log["benchmark/chart/source_cov"] = wandb.Image(bench["chart/source_cov"])
-                wandb_log["benchmark/chart/delta_line"] = wandb.Image(
-                    _delta_line_chart(delta_history)
-                )
+                delta_chart, ratio_chart = _delta_wandb_charts(delta_history)
+                wandb_log["benchmark/chart/delta_line"] = delta_chart
+                wandb_log["benchmark/chart/delta_ratio"] = ratio_chart
                 try_wandb(wandb.log, wandb_log, step=step)
 
         # --- Regular training log ---
@@ -711,6 +697,18 @@ def main() -> None:
         action="store_true",
         help="Override config sampling to 'continuous' if it is not already set.",
     )
+    parser.add_argument(
+        "--gi_coeff",
+        type=float,
+        default=None,
+        help="Override config.gi_coeff (directional ablation strength). Sweep [1, 3, 5].",
+    )
+    parser.add_argument(
+        "--gi_power_iters",
+        type=int,
+        default=None,
+        help="Override config.gi_power_iters (power-iteration steps).",
+    )
     parser.add_argument("--seed", type=int, default=0)
     args = parser.parse_args()
 
@@ -718,6 +716,14 @@ def main() -> None:
     set_seed(args.seed)
 
     config = Config.from_file(args.config_path)
+
+    gi_overrides: dict[str, Any] = {}
+    if args.gi_coeff is not None:
+        gi_overrides["gi_coeff"] = args.gi_coeff
+    if args.gi_power_iters is not None:
+        gi_overrides["gi_power_iters"] = args.gi_power_iters
+    if gi_overrides:
+        config = config.model_copy(update=gi_overrides)
 
     if config.sampling != "continuous":
         assert args.force_continuous, (

@@ -10,7 +10,7 @@ from torch import Tensor, nn
 from torch.utils.hooks import RemovableHandle
 from transformers.pytorch_utils import Conv1D as RadfordConv1D
 
-from spd.configs import Config, SamplingType
+from spd.configs import Config, GIVariant, SamplingType
 from spd.identity_insertion import insert_identity_operations_
 from spd.interfaces import LoadableModule, RunInfo
 from spd.models.components import (
@@ -70,6 +70,12 @@ class ComponentModel(LoadableModule):
     correctly when the model is wrapped in a `DistributedDataParallel` wrapper (and for other
     conveniences).
     """
+
+    # Gradient-informed sampling config; overridden from the run config in run_spd.
+    # Read by calc_stochastic_component_mask_info when sampling="gradient_informed".
+    gi_variant: GIVariant = "power_iter"
+    gi_coeff: float = 5.0
+    gi_power_iters: int = 5
 
     def __init__(
         self,

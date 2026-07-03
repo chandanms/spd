@@ -158,6 +158,10 @@ def optimize(
         sigmoid_type=config.sigmoid_type,
     )
 
+    model.gi_variant = config.gi_variant
+    model.gi_coeff = config.gi_coeff
+    model.gi_power_iters = config.gi_power_iters
+
     if ln_stds is not None:
         # model has ablated layernorms, patch in the fixed std values
         replace_std_values_in_layernorm(model, ln_stds)
