@@ -1,0 +1,16 @@
+\begin{tabular}{lcccc}
+\toprule
+Sampler & $\Delta\mathcal{L}_{\mathrm{recon}}$ & Ratio to uniform & Paired $t$ & Nominal $p$ \\
+\midrule
+Uniform & $1.1871 \times 10^{-4}$ & 1.00 $\pm$ 0.00 & -- & -- \\
+GIS $k=0.25$ & $1.1909 \times 10^{-4}$ & 1.00 $\pm$ 0.00 & 1.02 & $6.2323 \times 10^{-1}$ \\
+GIS $k=0.5$ & $1.2126 \times 10^{-4}$ & 1.02 $\pm$ 0.00 & 6.06 & $3.2895 \times 10^{-4}$ \\
+GIS $k=1$ & $1.3535 \times 10^{-4}$ & 1.14 $\pm$ 0.00 & 35.18 & $3.4083 \times 10^{-18}$ \\
+GIS $k=2$ & $1.5193 \times 10^{-4}$ & 1.28 $\pm$ 0.00 & 68.61 & $9.1248 \times 10^{-23}$ \\
+GIS $k=4$ & $1.5981 \times 10^{-4}$ & 1.35 $\pm$ 0.00 & 76.64 & $1.0542 \times 10^{-23}$ \\
+GIS $k=8$ & $1.6297 \times 10^{-4}$ & 1.37 $\pm$ 0.00 & 95.02 & $2.0017 \times 10^{-25}$ \\
+PGD, step 0.1, 20 steps & $1.4284 \times 10^{-3}$ & 12.03 $\pm$ 0.22 & 102.58 & $7.9137 \times 10^{-26}$ \\
+PGD, step 0.5, 20 steps & $1.6495 \times 10^{-3}$ & 13.90 $\pm$ 0.22 & 110.78 & $4.8806 \times 10^{-26}$ \\
+PGD, step 1, 20 steps & $1.6041 \times 10^{-3}$ & 13.51 $\pm$ 0.17 & 111.72 & $9.7175 \times 10^{-26}$ \\
+\bottomrule
+\end{tabular}

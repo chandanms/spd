@@ -31,6 +31,7 @@ def gradient_informed_source(
     variant: GIVariant,
     coeff: float,
     power_iters: int,
+    importance_temperature: float = 1.0,
 ) -> tuple[Float[Tensor, "... C"], float | None]:
     """Stochastic mask source biased toward high-reconstruction-error directions.
 
@@ -46,7 +47,11 @@ def gradient_informed_source(
     base_random = torch.rand_like(ci)
     match variant:
         case "per_component":
-            importance = grad.abs()
+            # Scaling before exponentiation cancels during normalization while
+            # preventing fp32 underflow for small gradients at high temperatures.
+            grad_mag = grad.abs()
+            grad_mag = grad_mag / (grad_mag.amax(dim=-1, keepdim=True) + 1e-10)
+            importance = grad_mag.pow(importance_temperature)
             importance_normalized = importance / (importance.sum(dim=-1, keepdim=True) + 1e-10)
             return (1.0 - importance_normalized) * base_random, None
         case "per_example":
@@ -82,7 +87,22 @@ def calc_stochastic_component_mask_info(
     router: Router,
     component_model: "ComponentModel | None" = None,
     use_gradient_informed: bool = True,
+    importance_temperature: float = 1.0,
 ) -> dict[str, ComponentsMaskInfo]:
+    """Draw stochastic component masks.
+
+    For per-component ``gradient_informed`` sampling the stochastic source is
+    scaled down for high-attribution components:
+
+        w_c = |grad_c|^k / sum_c |grad_c|^k
+        stochastic_source = (1 - w_c) * Uniform[0, 1]
+
+    ``importance_temperature`` is the exponent ``k``. k=1 recovers plain
+    magnitude normalisation (mass spread ~1/C over all components, so the
+    sampler stays close to uniform). Larger k concentrates the weight onto the
+    top-attribution components, moving those away from uniform while the bulk
+    becomes more uniform.
+    """
     ci_sample = next(iter(causal_importances.values()))
     leading_dims = ci_sample.shape[:-1]
     device = ci_sample.device
@@ -112,6 +132,7 @@ def calc_stochastic_component_mask_info(
                         variant=component_model.gi_variant,
                         coeff=component_model.gi_coeff,
                         power_iters=component_model.gi_power_iters,
+                        importance_temperature=importance_temperature,
                     )
 
         component_masks[layer] = ci + (1 - ci) * stochastic_source
