@@ -16,9 +16,9 @@ pgd_coeffs = [3.0, 4.0, 5.0]
 for coeff in pgd_coeffs:
     for seed in seeds:
         run_name = f"resid_mlp2_pgd_{coeff}_seed-{seed}"
-        print(f"========================================")
+        print("========================================")
         print(f"Running: {run_name}")
-        print(f"========================================")
+        print("========================================")
 
         config = Config.from_file(CONFIG_DIR / "resid_mlp2_config.yaml")
         config_dict = config.model_dump(mode="json")
@@ -38,9 +38,9 @@ for coeff in pgd_coeffs:
 gradient_informed_coeff = 5.0
 for seed in seeds:
     run_name = f"resid_mlp2_gradient_informed_{gradient_informed_coeff}_seed-{seed}"
-    print(f"========================================")
+    print("========================================")
     print(f"Running: {run_name}")
-    print(f"========================================")
+    print("========================================")
 
     config = Config.from_file(CONFIG_DIR / "resid_mlp2_gradient_informed_config.yaml")
     config_dict = config.model_dump(mode="json")

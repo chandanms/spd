@@ -76,6 +76,8 @@ class ComponentModel(LoadableModule):
     gi_variant: GIVariant = "power_iter"
     gi_coeff: float = 5.0
     gi_power_iters: int = 5
+    # ∂L_recon/∂ci per layer from the most recent gradient-informed loss; None until first set.
+    _importance_sampling_gradients: dict[str, Tensor] | None = None
 
     def __init__(
         self,

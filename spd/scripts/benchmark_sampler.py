@@ -51,7 +51,7 @@ from PIL import Image
 from scipy import stats as scipy_stats
 from tqdm import tqdm
 
-from spd.configs import Config, GIVariant, PGDMultiBatchConfig
+from spd.configs import Config, GIVariant, MetricConfigType, PGDMultiBatchConfig
 from spd.eval import evaluate
 from spd.identity_insertion import insert_identity_operations_
 from spd.log import logger
@@ -778,7 +778,7 @@ def run_benchmark_training(
         loss_configs=config.loss_metric_configs,
         eval_configs=config.eval_metric_configs,
     )
-    eval_metric_configs = [
+    eval_metric_configs: list[MetricConfigType] = [
         cfg for cfg in all_eval_configs if not isinstance(cfg, PGDMultiBatchConfig)
     ]
     eval_iter = _make_eval_iter(dataset, config.eval_batch_size, device)

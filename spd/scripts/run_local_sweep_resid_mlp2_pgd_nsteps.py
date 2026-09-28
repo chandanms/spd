@@ -15,9 +15,9 @@ n_steps_values = [3, 4, 5]
 for n_steps in n_steps_values:
     for seed in seeds:
         run_name = f"resid_mlp2_pgd_nsteps_{float(n_steps)}_seed-{seed}"
-        print(f"========================================")
+        print("========================================")
         print(f"Running: {run_name}")
-        print(f"========================================")
+        print("========================================")
 
         config = Config.from_file(CONFIG_DIR / "resid_mlp2_config.yaml")
         config_dict = config.model_dump(mode="json")

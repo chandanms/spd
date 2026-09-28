@@ -182,10 +182,10 @@ def plot_group(
             ax = axes[row][col]
             mean_col = f"{metric}__mean"
             std_col = f"{metric}__std"
-            if mean_col not in agg.columns or agg[mean_col].isna().all():
+            if mean_col not in agg.columns or bool(agg[mean_col].isna().all()):
                 continue
-            mean = agg[mean_col].values
-            std = agg[std_col].values
+            mean = agg[mean_col].to_numpy()
+            std = agg[std_col].to_numpy()
             (line,) = ax.plot(steps, mean, label=cond_label, linewidth=1.5)
             ax.fill_between(steps, mean - std, mean + std, alpha=0.15, color=line.get_color())
             ax.set_title(metric, fontsize=14, fontweight="bold")

@@ -1,5 +1,5 @@
 # TYPE_CHECKING import to avoid circular dependency at runtime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 import torch
 from jaxtyping import Float
@@ -78,6 +78,25 @@ def gradient_informed_source(
                 f"captured={captured.item():.6e}  Gnorm={grad_matrix.norm().item():.3e}  projnorm={(grad_matrix @ direction).norm().item():.3e}"
             )
             return source, captured.item()
+
+
+def store_importance_sampling_gradients(
+    model: "ComponentModel",
+    loss: Float[Tensor, ""],
+    ci: dict[str, Float[Tensor, "... C"]],
+) -> None:
+    """Store detached ∂loss/∂ci per layer on the model for the next gradient-informed draw."""
+    grads: dict[str, Float[Tensor, "... C"]] = {}
+    for layer_name, ci_tensor in ci.items():
+        if not ci_tensor.requires_grad:
+            continue
+        grad = cast(
+            Tensor | None,
+            torch.autograd.grad(loss, ci_tensor, retain_graph=True, allow_unused=True)[0],
+        )
+        if grad is not None:
+            grads[layer_name] = grad.detach()
+    model._importance_sampling_gradients = grads
 
 
 def calc_stochastic_component_mask_info(

@@ -17,9 +17,9 @@ seeds = [1, 2, 3, 4, 5, 6, 7, 8]
 for condition_name, config_path in conditions:
     for seed in seeds:
         run_name = f"resid_mlp2_{condition_name}_seed-{seed}"
-        print(f"========================================")
+        print("========================================")
         print(f"Running: {run_name}")
-        print(f"========================================")
+        print("========================================")
 
         config = Config.from_file(config_path)
         config_dict = config.model_dump(mode="json")

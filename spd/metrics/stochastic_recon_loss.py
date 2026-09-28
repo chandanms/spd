@@ -9,7 +9,10 @@ from spd.configs import SamplingType
 from spd.metrics.base import Metric
 from spd.models.component_model import CIOutputs, ComponentModel
 from spd.routing import AllLayersRouter
-from spd.utils.component_utils import calc_stochastic_component_mask_info
+from spd.utils.component_utils import (
+    calc_stochastic_component_mask_info,
+    store_importance_sampling_gradients,
+)
 from spd.utils.distributed_utils import all_reduce
 from spd.utils.general_utils import calc_sum_recon_loss_lm, get_obj_device
 
@@ -76,24 +79,8 @@ def stochastic_recon_loss(
     )
     final_loss = _stochastic_recon_loss_compute(sum_loss, n_examples)
 
-    # Extract gradients for gradient-informed sampling
     if sampling == "gradient_informed":
-        grad_ci_dict = {}
-        for layer_name, ci_tensor in ci.items():
-            if ci_tensor.requires_grad:
-                grad = torch.autograd.grad(
-                    outputs=final_loss,
-                    inputs=ci_tensor,
-                    retain_graph=True,
-                    create_graph=False,
-                    allow_unused=True,
-                )[0]
-
-                if grad is not None:
-                    grad_ci_dict[layer_name] = grad.detach()
-
-        # Store on model instance for layerwise loss to access
-        model._importance_sampling_gradients = grad_ci_dict
+        store_importance_sampling_gradients(model=model, loss=final_loss, ci=ci)
 
     return final_loss
 
