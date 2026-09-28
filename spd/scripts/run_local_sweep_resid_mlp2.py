@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""Local sweep comparing PGD vs gradient_informed vs stochastic_only on resid_mlp2."""
+"""Local sweep of resid_mlp2 training runs across seeds for each sampling condition."""
 
 import json
 from pathlib import Path
@@ -17,9 +17,9 @@ seeds = [1, 2, 3, 4, 5, 6, 7, 8]
 for condition_name, config_path in conditions:
     for seed in seeds:
         run_name = f"resid_mlp2_{condition_name}_seed-{seed}"
-        print(f"========================================")
+        print("========================================")
         print(f"Running: {run_name}")
-        print(f"========================================")
+        print("========================================")
 
         config = Config.from_file(config_path)
         config_dict = config.model_dump(mode="json")

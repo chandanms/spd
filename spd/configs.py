@@ -366,6 +366,11 @@ TaskConfig = TMSTaskConfig | ResidMLPTaskConfig | LMTaskConfig | IHTaskConfig
 
 SamplingType = Literal["continuous", "binomial", "gradient_informed"]
 
+# Variants of the gradient-informed sampler. "per_component" is the original
+# per-coordinate magnitude reweighting; the others bias the source along a
+# reconstruction-sensitivity *direction* extracted from the batch gradient.
+GIVariant = Literal["per_component", "per_example", "mean", "power_iter"]
+
 
 class Config(BaseConfig):
     # --- WandB
@@ -399,6 +404,22 @@ class Config(BaseConfig):
     sampling: SamplingType = Field(
         default="continuous",
         description="Sampling mode for stochastic elements: 'continuous' (default) or 'binomial'",
+    )
+    gi_variant: GIVariant = Field(
+        default="power_iter",
+        description="Which gradient-informed sampler to use when sampling='gradient_informed'. "
+        "'per_component' reweights each coordinate by its own gradient magnitude; the directional "
+        "variants ('per_example', 'mean', 'power_iter') bias the source along a reconstruction-"
+        "sensitivity direction extracted from the batch gradient.",
+    )
+    gi_coeff: float = Field(
+        default=5.0,
+        description="Strength of the directional ablation push for gradient-informed sampling "
+        "(unused by gi_variant='per_component').",
+    )
+    gi_power_iters: PositiveInt = Field(
+        default=5,
+        description="Number of power-iteration steps used by gi_variant='power_iter'.",
     )
     sigmoid_type: Literal["normal", "hard", "leaky_hard", "upper_leaky_hard", "swish_hard"] = Field(
         default="leaky_hard",

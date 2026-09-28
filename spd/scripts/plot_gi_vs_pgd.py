@@ -2,7 +2,7 @@
 """Plot mean ± std training curves across seed runs from WandB sweeps.
 
 Usage:
-    python spd/scripts/plotting.py
+    python spd/scripts/plot_gi_vs_pgd.py
 
 Each group produces one figure with one subplot per metric.
 Each condition within the group is plotted as a mean line with ±1 std shading.
@@ -171,7 +171,7 @@ def plot_group(
     n_metrics = len(group_metrics)
     n_cols = min(4, n_metrics)
     n_rows = math.ceil(n_metrics / n_cols)
-    fig, axes = plt.subplots(n_rows, n_cols, figsize=(5 * n_cols, 3.5 * n_rows), squeeze=False)
+    fig, axes = plt.subplots(n_rows, n_cols, figsize=(5.5 * n_cols, 4 * n_rows), squeeze=False)
 
     for cond_label, agg in cond_aggs.items():
         if agg.empty:
@@ -182,15 +182,15 @@ def plot_group(
             ax = axes[row][col]
             mean_col = f"{metric}__mean"
             std_col = f"{metric}__std"
-            if mean_col not in agg.columns or agg[mean_col].isna().all():
+            if mean_col not in agg.columns or bool(agg[mean_col].isna().all()):
                 continue
-            mean = agg[mean_col].values
-            std = agg[std_col].values
+            mean = agg[mean_col].to_numpy()
+            std = agg[std_col].to_numpy()
             (line,) = ax.plot(steps, mean, label=cond_label, linewidth=1.5)
             ax.fill_between(steps, mean - std, mean + std, alpha=0.15, color=line.get_color())
-            ax.set_title(metric, fontsize=7)
-            ax.set_xlabel("step", fontsize=7)
-            ax.tick_params(labelsize=6)
+            ax.set_title(metric, fontsize=14, fontweight="bold")
+            ax.set_xlabel("step", fontsize=9)
+            ax.tick_params(labelsize=8)
 
     # Hide unused subplots
     for idx in range(n_metrics, n_rows * n_cols):
@@ -199,17 +199,18 @@ def plot_group(
 
     handles, labels = axes[0][0].get_legend_handles_labels()
     n_legend_cols = min(4, len(labels))
-    fig.suptitle(title, fontsize=13, fontweight="bold")
+    if title:
+        fig.suptitle(title, fontsize=15, fontweight="bold")
     fig.legend(
         handles,
         labels,
         loc="upper center",
-        bbox_to_anchor=(0.5, 0.95),
+        bbox_to_anchor=(0.5, 0.95 if title else 0.99),
         ncol=n_legend_cols,
-        fontsize=9,
+        fontsize=16,
         bbox_transform=fig.transFigure,
     )
-    fig.tight_layout(rect=(0, 0.02, 1, 0.92))
+    fig.tight_layout(rect=(0, 0.02, 1, 0.92 if title else 0.95))
 
     if output_dir is not None:
         output_dir.mkdir(parents=True, exist_ok=True)
@@ -279,53 +280,54 @@ GROUPS: list[GroupSpec] = [
     #         ("gradient_informed", "tms_40-10-id_gradient_informed_sampling", DEFAULT_PROJECT),
     #     ],
     # ),
-    # (
-    #     "resid_mlp2",
-    #     [
-    #         ("subset_loss_continuous", "resid_mlp2_continuous_subset", DEFAULT_PROJECT),
-    #         ("layerwise_loss_continuous", "resid_mlp2_continuous", DEFAULT_PROJECT),
-    #         ("subset_loss_pgd", "resid_mlp2_pgd", "spd"),
-    #         (
-    #             "subset_loss_gradient_informed",
-    #             "resid_mlp2_subset_gradient_informed_2.0",
-    #             DEFAULT_PROJECT,
-    #         ),
-    #     ],
-    # ),
     (
-        "resid_mlp2_pgd_vs_gradient-informed",
-        "resid_mlp2: Comparison of hyperparameters in PGD and gradient informed sampling",
+        "resid_mlp2",
+        "",
         [
+            ("subset_loss_continuous", "resid_mlp2_continuous_subset", DEFAULT_PROJECT),
+            ("layerwise_loss_continuous", "resid_mlp2_continuous", DEFAULT_PROJECT),
             ("subset_loss_pgd", "resid_mlp2_pgd", "spd"),
-            ("subset_loss_pgd_nsteps2.0", "resid_mlp2_pgd_nsteps_2.0", "spd"),
-            ("subset_loss_pgd_nsteps3.0", "resid_mlp2_pgd_nsteps_3.0", DEFAULT_PROJECT),
-            ("subset_loss_pgd_nsteps4.0", "resid_mlp2_pgd_nsteps_4.0", DEFAULT_PROJECT),
-            ("subset_loss_pgd_nsteps5.0", "resid_mlp2_pgd_nsteps_5.0", DEFAULT_PROJECT),
             (
                 "subset_loss_gradient_informed",
                 "resid_mlp2_subset_gradient_informed_2.0",
                 DEFAULT_PROJECT,
             ),
-            (
-                "subset_loss_gradient_informed_coeff3.0",
-                "resid_mlp2_gradient_informed_3.0",
-                DEFAULT_PROJECT,
-            ),
-            (
-                "subset_loss_gradient_informed_coeff4.0",
-                "resid_mlp2_gradient_informed_4.0",
-                DEFAULT_PROJECT,
-            ),
-            (
-                "subset_loss_gradient_informed_coeff5.0",
-                "resid_mlp2_gradient_informed_5.0",
-                DEFAULT_PROJECT,
-            ),
-            ("subset_loss_pgd_coeff3.0_nsteps1.0", "resid_mlp2_pgd_3.0", DEFAULT_PROJECT),
-            # ("subset_loss_pgd_coeff4.0", "resid_mlp2_pgd_4.0", DEFAULT_PROJECT),
-            ("subset_loss_pgd_coeff5.0_nsteps1.0", "resid_mlp2_pgd_5.0", DEFAULT_PROJECT),
         ],
     ),
+    # (
+    #     "resid_mlp2_pgd_vs_gradient-informed",
+    #     "resid_mlp2: Comparison of hyperparameters in PGD and gradient informed sampling",
+    #     [
+    #         ("subset_loss_pgd", "resid_mlp2_pgd", "spd"),
+    #         ("subset_loss_pgd_nsteps2.0", "resid_mlp2_pgd_nsteps_2.0", "spd"),
+    #         ("subset_loss_pgd_nsteps3.0", "resid_mlp2_pgd_nsteps_3.0", DEFAULT_PROJECT),
+    #         ("subset_loss_pgd_nsteps4.0", "resid_mlp2_pgd_nsteps_4.0", DEFAULT_PROJECT),
+    #         ("subset_loss_pgd_nsteps5.0", "resid_mlp2_pgd_nsteps_5.0", DEFAULT_PROJECT),
+    #         (
+    #             "subset_loss_gradient_informed",
+    #             "resid_mlp2_subset_gradient_informed_2.0",
+    #             DEFAULT_PROJECT,
+    #         ),
+    #         (
+    #             "subset_loss_gradient_informed_coeff3.0",
+    #             "resid_mlp2_gradient_informed_3.0",
+    #             DEFAULT_PROJECT,
+    #         ),
+    #         (
+    #             "subset_loss_gradient_informed_coeff4.0",
+    #             "resid_mlp2_gradient_informed_4.0",
+    #             DEFAULT_PROJECT,
+    #         ),
+    #         (
+    #             "subset_loss_gradient_informed_coeff5.0",
+    #             "resid_mlp2_gradient_informed_5.0",
+    #             DEFAULT_PROJECT,
+    #         ),
+    #         ("subset_loss_pgd_coeff3.0_nsteps1.0", "resid_mlp2_pgd_3.0", DEFAULT_PROJECT),
+    #         # ("subset_loss_pgd_coeff4.0", "resid_mlp2_pgd_4.0", DEFAULT_PROJECT),
+    #         ("subset_loss_pgd_coeff5.0_nsteps1.0", "resid_mlp2_pgd_5.0", DEFAULT_PROJECT),
+    #     ],
+    # ),
 ]
 
 # Metrics to plot. Set to None to auto-discover per group (recommended).

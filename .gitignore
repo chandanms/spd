@@ -173,3 +173,6 @@ cython_debug/
 
 **/*.db
 **/*.db*
+# Outputs of spd/scripts/plot_*.py and benchmark_*.py
+/plots/
+/results_table*.tex

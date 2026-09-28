@@ -66,7 +66,7 @@ def plot_group(
         return
 
     x = np.arange(len(labels))
-    fig, ax = plt.subplots(figsize=(max(5, 2 * len(labels)), 4))
+    fig, ax = plt.subplots(figsize=(max(6, 2.4 * len(labels)), 5))
     bars = ax.bar(x, means, yerr=stds, capsize=5, width=0.6)
 
     # Annotate each bar with mean ± std
@@ -77,13 +77,14 @@ def plot_group(
             f"{mean:.0f}s",
             ha="center",
             va="bottom",
-            fontsize=8,
+            fontsize=10,
         )
 
     ax.set_xticks(x)
-    ax.set_xticklabels(labels, rotation=15, ha="right", fontsize=9)
-    ax.set_ylabel("Wall-clock time (s)")
-    ax.set_title(title, fontsize=12, fontweight="bold")
+    ax.set_xticklabels(labels, rotation=15, ha="right", fontsize=11)
+    ax.tick_params(axis="y", labelsize=10)
+    ax.set_ylabel("Wall-clock time (s)", fontsize=12)
+    ax.set_title(title, fontsize=14, fontweight="bold")
     fig.tight_layout()
 
     if output_dir is not None:
