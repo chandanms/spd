@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""Local sweep comparing PGD vs gradient_informed vs stochastic_only on resid_mlp2."""
+"""Local sweep of resid_mlp2 training runs across seeds for each sampling condition."""
 
 import json
 from pathlib import Path

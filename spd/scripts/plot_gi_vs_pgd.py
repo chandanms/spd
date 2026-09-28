@@ -2,7 +2,7 @@
 """Plot mean ± std training curves across seed runs from WandB sweeps.
 
 Usage:
-    python spd/scripts/plotting.py
+    python spd/scripts/plot_gi_vs_pgd.py
 
 Each group produces one figure with one subplot per metric.
 Each condition within the group is plotted as a mean line with ±1 std shading.
