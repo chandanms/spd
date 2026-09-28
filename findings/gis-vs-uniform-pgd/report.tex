@@ -34,12 +34,20 @@ several ways \cite{bushnaq2026interpreting}; the one relevant here is that along
 stochastic reconstruction loss it adds an adversarial one, in which gradient ascent finds
 a high-loss mask before the model is optimized against it.
 
-This report asks whether the stochastic reconstruction terms can use their available
-gradient information more effectively. They currently sample masking sources uniformly.
-We propose \textbf{Gradient-Informed Sampling (GIS)}, which biases a stochastic draw
-toward subcomponents with high reconstruction-loss sensitivity. Our main claim is narrow:
-GIS finds higher-loss masks than uniform sampling at low marginal cost. PGD is included
-as an optimization-based reference, not as a competing sampler.
+The stochastic reconstruction terms currently sample masking sources uniformly. We
+propose \textbf{Gradient-Informed Sampling (GIS)}, which biases a stochastic draw toward
+subcomponents with high reconstruction-loss sensitivity. The purpose of this report is
+to ask the VPD authors one question:
+
+\begin{quote}
+\emph{Would replacing VPD's uniform stochastic mask sources with GIS sources be useful
+while leaving its adversarial (PGD-optimized) reconstruction term unchanged? If so,
+which model and configuration would provide the most informative first experiment?}
+\end{quote}
+
+The evidence we offer is narrow: GIS finds higher-loss masks than uniform sampling at
+low marginal cost, and improves standalone training on \texttt{resid\_mlp2}. PGD is
+included as an optimization-based reference, not as a competing sampler.
 
 \section{Background}
 
@@ -47,15 +55,17 @@ Formally speaking, the reconstruction part in $\mathcal{L}_{\text{SPD}}$ aims to
 \begin{align} \label{eq:abl_req}
     \min_{U,V, \theta} \ \mathbb{E}_{r\sim p} \left[ D\left(f\left(x \mid W^{\prime}\left(x, r \right)\right), f(x \mid W)\right) \right],
 \end{align}
-where $U$ and $V$ contain subcomponents, $\theta$ contain the MLP parameters for the causal importance functions $g$, and $p$ is some probability distribution with full support on $[0,1]^{C \times L}$\footnote{$C, L, D, f, x, W$ follow the same notation as in the SPD paper.}.
-The practical use of $\sum_{i=1}^n \beta_i \mathcal{L}^{(i)}_{\text{recon}}$ in $\mathcal{L}_{\text{SPD}}$ is to deal with the intractability of the objective. Then, to efficiently minimize \eqref{eq:abl_req}, one can prioritize sources $r$ that dominate the expectation.\footnote{This is directly targeted by the adversarial reconstruction loss via an inner optimization.}
+where $U$ and $V$ contain subcomponents, $\theta$ contain the MLP parameters for the causal importance functions $g$, and $p$ is some probability distribution with full support on $[0,1]^{C \times L}$.\footnote{$C, L, D, f, x, W$ follow the same notation as in the SPD paper.}
+The expectation is intractable, so $\sum_{i=1}^n \beta_i \mathcal{L}^{(i)}_{\text{recon}}$ in $\mathcal{L}_{\text{SPD}}$ estimates it from a few sampled sources. Sampling the sources $r$ that dominate the expectation makes each such estimate more informative for minimizing \eqref{eq:abl_req}.\footnote{This is directly targeted by the adversarial reconstruction loss via an inner optimization.}
 
 
 \section{Methodology}
+\label{sec:method}
 
 GIS reuses the sensitivity from one reconstruction term,
 $\mathcal L_{\mathrm{recon}}^{(1)}$, to sample the next. For subcomponent $c$ in layer $l$,
-it assigns weight
+it assigns weight\footnote{Implemented in
+\href{https://github.com/chandanms/spd/blob/feature/important-sampling/spd/utils/component_utils.py}{\texttt{spd/utils/component\_utils.py}}.}
 \begin{align}
 \label{eq:weights}
     w_c^l(x) =
@@ -72,13 +82,16 @@ ablation curve,
     m_c^l=g_c^l+(1-g_c^l)\widetilde r_c^l.
 \end{align}
 Large gradient magnitude therefore causes stronger ablation, while $k$ redistributes a
-fixed budget, since $\sum_c w_c^l(x)=1$; the source is capped at $1-w_c^l(x)$, so the
-most sensitive subcomponents are never drawn near-unablated. When the first loss's
-forward pass is already present, GIS adds no forward pass; obtaining the sensitivity
-requires one partial backward through the retained graph and temporary storage of the
-subcomponent gradients. As in the implementation, these gradients are detached before
-constructing the GIS source, so the outer update does not differentiate through the
-sampling rule.
+fixed budget, since $\sum_c w_c^l(x)=1$. Because $\widetilde r_c^l\le 1-w_c^l(x)$, the
+GIS draw never samples sources above this cap, so it does not cover all of
+$[0,1]^{C\times L}$ as assumed for $p$ in \eqref{eq:abl_req}. At $k=1$,
+$w_c^l(x)\approx 1/C$ and the excluded range is negligible; it grows with $k$ (see the
+coverage concern in Section~\ref{sec:vpd}). The gradients are detached before constructing the GIS source,
+so the outer update does not differentiate through the sampling rule.
+
+GIS reuses the forward pass of $\mathcal L_{\mathrm{recon}}^{(1)}$ and adds one partial
+backward pass. PGD cannot reuse it: each ascent step changes the mask, so each step
+needs a new forward and backward pass.
 
 \begin{algorithm}[H]
 \caption{Gradient-Informed Sampling}
@@ -89,12 +102,16 @@ $\mathcal X$, exponent $k$
 \For{each outer training step}
     \State Sample $x$ and compute $y^*=f_{\mathrm{target}}(x)$
     \State Compute $\{g_c^l(\theta)\}=\Gamma_\theta(x)$
-    \State Compute $\mathcal L_{\mathrm{recon}}^{(1)}$ with uniform sources
-    \State Compute and detach the sensitivities, then obtain $w_c^l(x)$ using Equation~\ref{eq:weights}
-    \State Draw $r_c^l\sim U[0,1]$ and construct $\widetilde r_c^l,m_c^l$ using Equation~\ref{eq:mask}
-    \State Compute $\hat y=f(x;W'(x,\{m_c^l\}))$
-    \State Form $\mathcal L_{\mathrm{total}}$ from the reconstruction losses and configured
-    regularizers
+    \State Draw $u_c^l\sim U[0,1]$ and set $m_c^{(1),l}=g_c^l+(1-g_c^l)u_c^l$
+    \State $\mathcal L_{\mathrm{recon}}^{(1)}=D\big(f(x\mid W'(x,\{m_c^{(1),l}\})),\,y^*\big)$
+    \State $s_c^l=\operatorname{sg}\big[\partial\mathcal L_{\mathrm{recon}}^{(1)}/\partial g_c^l\big]$
+    \Comment{stop-gradient}
+    \State Obtain $w_c^l(x)$ from $s_c^l$ using \eqref{eq:weights}
+    \State Draw $r_c^l\sim U[0,1]$ and construct $\widetilde r_c^l,m_c^l$ using \eqref{eq:mask}
+    \State $\mathcal L_{\mathrm{recon}}^{(2)}=D\big(f(x\mid W'(x,\{m_c^l\})),\,y^*\big)$
+    \State $\mathcal L_{\mathrm{total}}=\beta_1\mathcal L_{\mathrm{recon}}^{(1)}
+    +\beta_2\mathcal L_{\mathrm{recon}}^{(2)}
+    +\beta_3\mathcal L_{\mathrm{importance\text{-}minimality}}$
     \State $(U,V,\theta)\gets\operatorname{OptimizerStep}
     (U,V,\theta;\nabla\mathcal L_{\mathrm{total}})$
 \EndFor
@@ -105,7 +122,8 @@ $\mathcal X$, exponent $k$
 \label{sec:sampler_benchmark}
 
 We first isolate the sampling question from training. A \texttt{resid\_mlp2}
-ComponentModel is trained with uniform sampling and frozen at the final checkpoint.
+ComponentModel\footnote{\href{https://github.com/chandanms/spd/blob/feature/important-sampling/spd/models/component_model.py}{\texttt{spd/models/component\_model.py}}.}
+is trained with uniform sampling and frozen at the final checkpoint.
 Uniform, GIS, and PGD then see the same evaluation batches and use the same mask
 construction. We report the reconstruction error induced by each mask,
 $\Delta\mathcal L_{\mathrm{recon}}$; larger values indicate harder masks.
@@ -118,29 +136,26 @@ in every arm so that only the subcomponent source changes.
 \begin{table}[ht]
 \centering
 \small
-\begin{tabular}{lrrrr}
+\begin{tabular}{lrrr}
 \toprule
-Method & Marginal fwd/bwd$^\dagger$ & $\Delta\mathcal L_{\mathrm{recon}}$
-& vs. uniform & PGD-20 headroom \\
+Method & $\Delta\mathcal L_{\mathrm{recon}}$ & vs. uniform & PGD-20 headroom \\
 \midrule
-Uniform       & $0/0$   & $1.1826\times10^{-4}$ & $1.00\times$ & 0.0\% \\
-GIS, $k=1$    & $0/1$   & $1.3454\times10^{-4}$ & $1.14\times$ & 1.1\% \\
-GIS, $k=2$    & $0/1$   & $1.5131\times10^{-4}$ & $1.28\times$ & 2.2\% \\
-GIS, $k=4$    & $0/1$   & $1.5858\times10^{-4}$ & $1.34\times$ & 2.6\% \\
-GIS, $k=8$    & $0/1$   & $1.6222\times10^{-4}$ & $1.37\times$ & 2.9\% \\
+Uniform       & $1.1826\times10^{-4}$ & $1.00\times$ & 0.0\% \\
+GIS, $k=1$    & $1.3454\times10^{-4}$ & $1.14\times$ & 1.1\% \\
+GIS, $k=2$    & $1.5131\times10^{-4}$ & $1.28\times$ & 2.2\% \\
+GIS, $k=4$    & $1.5858\times10^{-4}$ & $1.34\times$ & 2.6\% \\
+GIS, $k=8$    & $1.6222\times10^{-4}$ & $1.37\times$ & 2.9\% \\
 \midrule
-PGD, 1 step   & $1/1$   & $5.3078\times10^{-4}$ & $4.49\times$ & 27.1\% \\
-PGD, 2 steps  & $2/2$   & $8.1299\times10^{-4}$ & $6.87\times$ & 45.6\% \\
-PGD, 5 steps  & $5/5$   & $1.3021\times10^{-3}$ & $11.01\times$ & 77.6\% \\
-PGD, 20 steps & $20/20$ & $1.6432\times10^{-3}$ & $13.89\times$ & 100.0\% \\
+PGD, 1 step   & $5.3078\times10^{-4}$ & $4.49\times$ & 27.1\% \\
+PGD, 2 steps  & $8.1299\times10^{-4}$ & $6.87\times$ & 45.6\% \\
+PGD, 5 steps  & $1.3021\times10^{-3}$ & $11.01\times$ & 77.6\% \\
+PGD, 20 steps & $1.6432\times10^{-3}$ & $13.89\times$ & 100.0\% \\
 \bottomrule
 \end{tabular}
 \caption{Final-checkpoint results over three seeds and 20 paired batches per seed.
 The GIS ratio varied by less than $\pm0.01$ across seeds. ``PGD-20 headroom'' is
 $(\Delta\mathcal L-\Delta\mathcal L_{\mathrm{uniform}})/
-(\Delta\mathcal L_{\mathrm{PGD20}}-\Delta\mathcal L_{\mathrm{uniform}})$.
-$^\dagger$Marginal cost when GIS reuses the forward pass of an existing reconstruction
-loss. The standalone benchmark explicitly computes this signal.}
+(\Delta\mathcal L_{\mathrm{PGD20}}-\Delta\mathcal L_{\mathrm{uniform}})$.}
 \label{tab:benchmark}
 \end{table}
 
@@ -152,7 +167,7 @@ draw.
 The same table also bounds the importance of this result. Twenty-step PGD finds
 $13.89\times$ the uniform reconstruction loss, while GIS recovers only 2.9\% of the
 gap between uniform and PGD-20. Even one PGD step is much stronger than GIS, at the cost
-of an additional forward pass. GIS should therefore be evaluated against uniform, not
+of an additional forward pass (Section~\ref{sec:method}). GIS should therefore be evaluated against uniform, not
 presented as an alternative to adversarial optimization.
 
 \section{Training results}
@@ -165,9 +180,12 @@ uniform sampling and PGD on both measures.
 
 In the hyperparameter sweep, the best GIS run reaches an evaluation PGD reconstruction
 loss of $1.86\times10^{-4}$ and target-solution error of $18.6$, versus
-$1.57\times10^{-4}$ and $12.0$ for PGD. PGD with five steps takes $2976$ seconds,
-compared with $2121$--$2149$ seconds for GIS, or about $1.4\times$ longer
-(Figure~\ref{fig:wallclock}).
+$1.57\times10^{-4}$ and $12.0$ for PGD.
+
+Figure~\ref{fig:wallclock} shows the measured cost of each method. PGD training time
+grows with the number of inner steps, from $1996$ seconds for the base PGD run to
+$2976$ seconds at five steps. GIS stays between $1918$ and $2149$ seconds across its loss coefficients, so
+five-step PGD takes $1.4$--$1.6\times$ as long as GIS.
 
 Thus, on \texttt{resid\_mlp2}, GIS provides a substantially better standalone training
 signal than uniform sampling and approaches PGD on several decomposition metrics. It
@@ -194,19 +212,15 @@ establish whether the harder draws produced by larger $k$ improve training.
 \end{figure}
 
 \section{Proposed use in VPD}
+\label{sec:vpd}
 
 VPD uses separate adversarial and uniformly sampled reconstruction losses. On
 \texttt{resid\_mlp2}, GIS improves standalone training over uniform sampling and
 approaches PGD on several metrics. These results do not establish whether GIS adds value
 when PGD is already present: the two methods may emphasize overlapping weaknesses, or
-GIS may improve the stochastic term at low additional cost. We would therefore value
-the VPD authors' guidance on the following question:
-
-\begin{quote}
-\emph{Would replacing VPD's uniform mask sources with GIS sources be useful while
-leaving its PGD sources unchanged? If so, which model and configuration would provide
-the most informative first experiment?}
-\end{quote}
+GIS may improve the stochastic term at low additional cost. This is the question posed
+in the introduction: whether to replace VPD's uniform stochastic mask sources with GIS
+sources while leaving its adversarial (PGD-optimized) reconstruction term unchanged.
 
 The corresponding ablation would be
 \begin{equation*}
@@ -231,7 +245,7 @@ standalone training on \texttt{resid\_mlp2}, approaching PGD on several metrics 
 cost. It does not match PGD's adversarial reconstruction performance, nor do our
 experiments show that GIS adds value when PGD is already present. The supported next
 step is to compare GIS against uniform sampling within VPD's stochastic reconstruction
-term while leaving its adversarial term unchanged.
+term while leaving its adversarial (PGD-optimized) reconstruction term unchanged.
 
 \section*{Code and data availability}
 
